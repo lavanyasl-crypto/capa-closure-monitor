@@ -253,16 +253,14 @@ function renderKPIs(f){
   var capa = f.capa, audits = f.audits;
   var st = state.status;
 
-  // audit-level open/closed, over audits that have CAPA tasks
+  // All three audit cards derive from one classified set, so they always
+  // sum: No. of audits = CAPA open + CAPA closed, in every status filter.
   var byAudit = {};
   capa.forEach(function(c){ if (c.auditId) (byAudit[c.auditId] = byAudit[c.auditId] || []).push(c); });
   var auditIsOpen = {};
-  var auditsOpen = 0, auditsClosed = 0;
   Object.keys(byAudit).forEach(function(id){
     auditIsOpen[id] = byAudit[id].some(function(c){ return c.oc==='Open'; });
-    if (auditIsOpen[id]) auditsOpen++; else auditsClosed++;
   });
-  var auditClosedPct = (auditsOpen+auditsClosed) ? Math.round(1000*auditsClosed/(auditsOpen+auditsClosed))/10 : 0;
 
   // store-level status: any open task -> Open, else Closed
   var storeOpen = {};
@@ -285,6 +283,10 @@ function renderKPIs(f){
   });
 
   var noOfAudits = auditsSel.length;
+  var auditsOpen = 0;
+  auditsSel.forEach(function(a){ if (auditIsOpen[a.id]) auditsOpen++; });
+  var auditsClosed = noOfAudits - auditsOpen;
+  var auditClosedPct = noOfAudits ? Math.round(1000*auditsClosed/noOfAudits)/10 : 0;
 
   var cards = [
     { key:'audits',  value:fmt(noOfAudits),      label:'No. of audits' },
