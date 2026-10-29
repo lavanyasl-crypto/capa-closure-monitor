@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CAPA Closure Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="shared/theme.css">
+</head>
+<body>
+
+<header class="hero">
+  <div class="hero-inner">
+    <div class="hero-brand">
+      <div class="hero-mark" id="brandLogo"></div>
+      <div>
+        <div class="hero-title">CAPA Closure Monitor</div>
+        <div class="hero-sub" id="footMeta"></div>
+      </div>
+    </div>
+    <div class="hero-actions">
+      <button class="ghost-btn" id="themeToggle" title="Toggle dark mode"></button>
+    </div>
+  </div>
+  <div class="hero-band"></div>
+</header>
+
+<main class="wrap">
+
+  <!-- ================= CONTROL STRIP ================= -->
+  <section class="panel controls-panel">
+    <div class="ctrl-row">
+      <div class="ctrl-block grow">
+        <div class="ctrl-label">Period</div>
+        <div class="seg" id="datePresetSeg">
+          <button type="button" class="seg-btn active" data-preset="custom">Custom</button>
+          <button type="button" class="seg-btn" data-preset="day">Daily</button>
+          <button type="button" class="seg-btn" data-preset="week">Weekly</button>
+          <button type="button" class="seg-btn" data-preset="month">Monthly</button>
+        </div>
+        <select class="ctrl-input" id="weekSel" style="display:none"></select>
+        <select class="ctrl-input" id="monthSel" style="display:none"></select>
+        <span class="ctrl-label">From</span>
+        <input type="date" class="ctrl-input" id="dateFrom">
+        <span class="ctrl-label">To</span>
+        <input type="date" class="ctrl-input" id="dateTo">
+      </div>
+      <div class="ctrl-block">
+        <button class="ghost-btn" id="resetFiltersBtn">Reset all</button>
+        <span class="ctrl-note" id="dateStatusText"></span>
+      </div>
+    </div>
+    <div class="ctrl-row">
+      <div class="ctrl-block grow">
+        <div class="ctrl-label">Scope</div>
+        <div class="seg" id="geoSeg">
+          <button type="button" class="seg-btn active" data-geo="pan">PAN India</button>
+          <button type="button" class="seg-btn" data-geo="cluster">Cluster</button>
+          <button type="button" class="seg-btn" data-geo="city">City</button>
+        </div>
+        <div class="msel hidden" id="clusterSel"><button class="msel-btn" id="clusterSelBtn"></button><div class="msel-pop"></div></div>
+        <div class="msel hidden" id="citySel"><button class="msel-btn" id="citySelBtn"></button><div class="msel-pop"></div></div>
+      </div>
+      <div class="ctrl-block grow">
+        <div class="ctrl-label">Store</div>
+        <div class="msel" id="podSel"><button class="msel-btn" id="podSelBtn"></button><div class="msel-pop"></div></div>
+      </div>
+      <div class="ctrl-block">
+        <div class="ctrl-label">Status</div>
+        <div class="seg" id="statusSeg">
+          <button type="button" class="seg-btn active" data-status="all">All</button>
+          <button type="button" class="seg-btn" data-status="open">Open</button>
+          <button type="button" class="seg-btn" data-status="closed">Closed</button>
+        </div>
+      </div>
+    </div>
+    <div class="active-tags" id="activeTags"></div>
+  </section>
+
+  <!-- ================= KPI ================= -->
+  <div class="grid kpi-grid" id="capaKpiGrid"></div>
+
+  <!-- ================= MAIN TABLE ================= -->
+  <section class="panel">
+    <div class="panel-head">
+      <div>
+        <div class="panel-title">City &amp; store closure status</div>
+        <div class="panel-sub">City, store and CAPA closure status — use "View report" for the full store report</div>
+      </div>
+    </div>
+    <div id="capaOverdueTable"></div>
+  </section>
+
+  <footer class="foot">
+    <span>CAPA Closure Monitor</span>
+    <span>Open = Open + In Progress tasks · Closed = fully resolved</span>
+  </footer>
+</main>
+
+<div id="modalRoot"></div>
+
+<script src="data.js"></script>
+<script src="shared/icons.js"></script>
+<script src="shared/charts.js"></script>
+<script>
+(function(){
+"use strict";
+var C = window.Charts;
+var esc = C.esc, fmt = C.fmt, pct = C.pct;
+var icon = window.icon;
+
+// ---------------- data normalization ----------------
+var RAW = window.CAPA_DATA || [];
+var ARaw = window.AUDIT_DATA || [];
+var D = RAW.map(function(r){
+  var photos = (r.p||'').split(/\s+/).filter(Boolean).map(function(id){
+    return 'https://drive.google.com/file/d/'+id+'/view';
+  });
+  var cphotos = (r.cp||'').split(/\s+/).filter(Boolean).map(function(id){
+    return 'https://drive.google.com/file/d/'+id+'/view';
+  });
+  return {
+    capaId:r.i, auditId:r.ai, storeId:r.s, storeName:r.n, city:r.c, cluster:r.cl2,
+    checkpoint:r.k, remark:r.m, status:r.st,
+    auditDate:r.ad, createdAt:r.cr, dueAt:r.du, closedAt:r.cl,
+    closureRemark:r.cm, closedBy:r.cb,
+    photos:photos, closurePhotos:cphotos
+  };
+});
+var AUDITS = ARaw.map(function(a){
+  return { id:a.id, date:a.d, storeId:a.s, city:a.c, cluster:a.cl2, nc:a.n, pc:a.pc, na:a.na, scorePercent:a.pct };
+});
+
+// In Progress folds into Open — only Open / Closed exist in this report.
+function openClosed(status){ return status === 'Closed' ? 'Closed' : 'Open'; }
+
+var TODAY = D.reduce(function(m,t){ return t.createdAt>m?t.createdAt:m; }, '').slice(0,10);
+function isOverdue(t){
+  if (t.status === 'Closed') return false;
+  return t.dueAt && TODAY > t.dueAt;
+}
+D.forEach(function(t){
+  t.oc = openClosed(t.status);
+  t.overdueDays = 0;
+  if (t.dueAt){
+    if (t.status==='Closed' && t.closedAt) t.overdueDays = Math.max(0, Math.round((new Date(t.closedAt)-new Date(t.dueAt))/86400000));
+    else if (t.status!=='Closed') t.overdueDays = Math.max(0, Math.round((new Date(TODAY)-new Date(t.dueAt))/86400000));
+  }
+});
+
+// ---------------- ranges ----------------
+var DATE_FROM = D.reduce(function(m,t){ return t.createdAt<m?t.createdAt:m; }, '9999').slice(0,10);
+var DATE_TO = TODAY;
+
+var state = {
+  cities: null,
+  clusters: null,
+  pods: null,
+  geoMode: 'pan',
+  status: 'all',
+  dateFrom: DATE_FROM,
+  dateTo: DATE_TO
+};
+
+var ALL_CITIES = Array.from(new Set(D.map(function(t){ return t.city; }))).sort();
+var ALL_CLUSTERS = Array.from(new Set(D.map(function(t){ return t.cluster; }))).sort();
+// Store dropdown option: "City - Store ID · Store name" plus its overall status
+var STORE_OC = {};
+D.forEach(function(t){
+  var cur = STORE_OC[t.storeId];
+  STORE_OC[t.storeId] = (cur === 'Closed') ? t.oc : (t.oc === 'Open' ? 'Open' : (cur || t.oc));
+});
+var ALL_PODS = Array.from(new Set(D.map(function(t){ return t.storeId+'|'+t.storeName+'|'+t.city+'|'+t.cluster; }))).map(function(k){
+  var p = k.split('|');
+  var st = STORE_OC[p[0]] || 'Open';
+  return { id:p[0], label:p[2]+' - '+p[0]+' · '+p[1], status:st, city:p[2], cluster:p[3] };
+}).sort(function(a,b){ return a.label.localeCompare(b.label); });
+
+function within(dateStr){ return dateStr >= state.dateFrom && dateStr <= state.dateTo; }
+function cityOk(c){ return !state.cities || state.cities.has(c); }
+function clusterOk(z){ return !state.clusters || state.clusters.has(z); }
+function podOk(id){ return !state.pods || state.pods.has(id); }
+function statusOk(s){ return state.status==='all' || s===state.status; }
+
+function computeFiltered(){
+  var capa = D.filter(function(t){
+    return cityOk(t.city) && clusterOk(t.cluster) && podOk(t.storeId) && within(t.createdAt);
+  });
+  var audits = AUDITS.filter(function(a){
+    return cityOk(a.city) && clusterOk(a.cluster) && podOk(a.storeId) && within(a.date);
+  });
+  return { capa:capa, audits:audits };
+}
+
+// ---------------- store rollup (Open/Closed only) ----------------
+function computeStoreCapaSummary(rows){
+  var byStore = {};
+  rows.forEach(function(c){
+    var s = byStore[c.storeId] = byStore[c.storeId] || { storeId:c.storeId, storeName:c.storeName, city:c.city, cluster:c.cluster, tasks:[], lastAuditDate:c.auditDate };
+    s.tasks.push(c);
+    if (c.auditDate > s.lastAuditDate) s.lastAuditDate = c.auditDate;
+  });
+  return Object.keys(byStore).map(function(k){
+    var s = byStore[k];
+    s.status = s.tasks.some(function(t){ return t.oc==='Open'; }) ? 'Open' : 'Closed';
+    s.overdue = s.tasks.filter(isOverdue).length;
+    s.closedLate = s.tasks.filter(function(t){ return t.status==='Closed' && t.closedAt && t.closedAt > t.dueAt; }).length;
+    return s;
+  });
+}
+
+// ---------------- date helpers ----------------
+var MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function isoWeekKey(d){
+  var dt = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  var day = (dt.getUTCDay()+6)%7; dt.setUTCDate(dt.getUTCDate()-day+3);
+  var firstThu = new Date(Date.UTC(dt.getUTCFullYear(),0,4));
+  var week = 1 + Math.round(((dt-firstThu)/86400000 - 3 + ((firstThu.getUTCDay()+6)%7))/7);
+  return dt.getUTCFullYear()+'-W'+String(week).padStart(2,'0');
+}
+function isoWeekKeyOf(dstr){ return isoWeekKey(new Date(dstr+'T00:00:00Z')); }
+function isoWeekRange(key){
+  var p = key.split('-W'), year = +p[0], wk = +p[1];
+  var jan4 = new Date(Date.UTC(year,0,4));
+  var day = (jan4.getUTCDay()+6)%7;
+  var monday = new Date(Date.UTC(year,0,4)); monday.setUTCDate(jan4.getUTCDate()-day+(wk-1)*7);
+  var sunday = new Date(monday); sunday.setUTCDate(monday.getUTCDate()+6);
+  return { from: monday.toISOString().slice(0,10), to: sunday.toISOString().slice(0,10) };
+}
+function lastDayOfMonth(ym){ var y=+ym.slice(0,4), m=+ym.slice(5,7); return new Date(Date.UTC(y,m,0)).getUTCDate(); }
+function filterWeeks(){
+  var set = {}; D.forEach(function(t){ set[isoWeekKeyOf(t.createdAt)] = true; });
+  return Object.keys(set).sort();
+}
+function filterMonths(){
+  var set = {}; D.forEach(function(t){ set[t.createdAt.slice(0,7)] = true; });
+  return Object.keys(set).sort();
+}
+function weekOptionLabel(key){
+  var r = isoWeekRange(key);
+  return 'Week '+(+key.split('-W')[1])+'  ('+r.from.slice(5)+' → '+r.to.slice(5)+')';
+}
+function monthOptionLabel(ym){
+  return MONTH_NAMES[(+ym.slice(5,7))-1]+' '+ym.slice(0,4);
+}
+
+// ================================================================
+// KPIs — the exact set requested
+// ================================================================
+function renderKPIs(f){
+  var el = document.getElementById('capaKpiGrid'); if (!el) return;
+  var capa = f.capa, audits = f.audits;
+  var st = state.status;
+
+  // audit-level open/closed, over audits that have CAPA tasks
+  var byAudit = {};
+  capa.forEach(function(c){ if (c.auditId) (byAudit[c.auditId] = byAudit[c.auditId] || []).push(c); });
+  var auditIsOpen = {};
+  var auditsOpen = 0, auditsClosed = 0;
+  Object.keys(byAudit).forEach(function(id){
+    auditIsOpen[id] = byAudit[id].some(function(c){ return c.oc==='Open'; });
+    if (auditIsOpen[id]) auditsOpen++; else auditsClosed++;
+  });
+  var auditClosedPct = (auditsOpen+auditsClosed) ? Math.round(1000*auditsClosed/(auditsOpen+auditsClosed))/10 : 0;
+
+  // store-level status: any open task -> Open, else Closed
+  var storeOpen = {};
+  capa.forEach(function(c){ if (c.oc==='Open') storeOpen[c.storeId] = true; });
+  var capaStoreIds = new Set(capa.map(function(c){ return c.storeId; }));
+
+  // "Stores audited" = union of audit-rollup stores and CAPA-task stores,
+  // so it can never be smaller than "Stores with CAPA tasks" (a few audits
+  // exist only in the CAPA export — their responses rows are missing).
+  function storeMatchesStatus(sid){
+    if (st === 'all') return true;
+    return (st === 'open') === !!storeOpen[sid];
+  }
+  var auditsSel = st === 'all' ? audits
+    : audits.filter(function(a){ return (st === 'open') === !!auditIsOpen[a.id]; });
+  var storesAudited = new Set(auditsSel.map(function(a){ return a.storeId; }));
+  var storesWithCapa = new Set();
+  capaStoreIds.forEach(function(sid){
+    if (storeMatchesStatus(sid)){ storesWithCapa.add(sid); storesAudited.add(sid); }
+  });
+
+  var noOfAudits = auditsSel.length;
+
+  var cards = [
+    { key:'audits',  value:fmt(noOfAudits),      label:'No. of audits' },
+    { key:'storesA', value:fmt(storesAudited.size),   label:'Stores audited' },
+    { key:'storesC', value:fmt(storesWithCapa.size),  label:'Stores with CAPA tasks' },
+    { key:'aOpen',   value:fmt(auditsOpen),      label:'Audits — CAPA open' },
+    { key:'aClosed', value:fmt(auditsClosed),    label:'Audits — CAPA closed' },
+    { key:'aPct',    value:auditClosedPct+'%',   label:'Audits CAPA closed (%)' },
+  ];
+  el.innerHTML = cards.map(C.kpiCard).join('');
+}
+
+// ================================================================
+// store table
+// ================================================================
+function renderStoreTable(f){
+  var tableEl = document.getElementById('capaOverdueTable');
+  if (!tableEl) return;
+  var st = state.status;
+  var storeSummary = computeStoreCapaSummary(f.capa).filter(function(s){
+    return st==='all' || s.status.toLowerCase()===st;
+  });
+  var storeRows = storeSummary.slice()
+    .sort(function(a,b){ return a.city.localeCompare(b.city) || a.storeName.localeCompare(b.storeName); });
+  renderGenericTable(tableEl, {
+    columns:[
+      { key:'city', label:'City' },
+      { key:'storeId', label:'Store ID' },
+      { key:'storeName', label:'Store name', wide:true },
+      { key:'status', label:'Status', render:function(r){
+        if (r.status==='Closed') return '<span class="badge good">Closed</span>';
+        return '<span class="badge warn">Open</span>';
+      } },
+    ],
+    rows: storeRows, pageSize: 10, searchable: true,
+    csvName:'store-capa-status.csv',
+    onViewReport: function(r){ openStoreReportModal(r.storeId); }
+  });
+}
+
+// ================================================================
+// modals
+// ================================================================
+function openCapaListModal(title, rows){
+  rows = rows.slice().sort(function(a,b){ return b.createdAt.localeCompare(a.createdAt); });
+  var body = '<div class="table-wrap"><table class="datatable"><thead><tr><th>City</th><th>Store</th><th>Checkpoint</th><th>Status</th><th>Days overdue</th></tr></thead><tbody>'+
+    rows.slice(0,400).map(function(r){ return '<tr class="rowlink" data-id="'+esc(r.capaId)+'"><td>'+esc(r.city)+'</td><td>'+esc(r.storeName)+'</td><td>'+esc(r.checkpoint)+'</td><td>'+esc(r.oc)+'</td><td>'+(r.overdueDays>0?('<span class="badge bad">'+r.overdueDays+'d</span>'):'—')+'</td></tr>'; }).join('')+
+    '</tbody></table></div>'+(rows.length>400?'<div class="panel-sub" style="margin-top:8px">Showing first 400 of '+rows.length+' matching tasks.</div>':'');
+  openModal('clipboard-list', title+' — '+fmt(rows.length)+' CAPA tasks', body);
+  var modalBody = document.querySelector('#modalRoot .modal-body');
+  modalBody.querySelectorAll('.rowlink').forEach(function(tr){
+    tr.addEventListener('click', function(){
+      var r = rows.find(function(x){ return x.capaId === tr.getAttribute('data-id'); });
+      if (r) openCapaFindingModal(r);
+    });
+  });
+}
+
+function photoLinksHtml(photos, label){
+  if (!photos || !photos.length) return '';
+  return '<div class="fc-photos">'+photos.map(function(u,i){
+    return '<a class="photo-link" href="'+esc(u)+'" target="_blank" rel="noopener">'+icon('image',{size:11})+label+' '+(i+1)+'</a>';
+  }).join('')+'</div>';
+}
+
+function openCapaFindingModal(r){
+  var ocBadge = r.oc==='Closed'
+    ? '<span class="badge good">'+icon('check-circle',{size:10})+'Closed'+(r.closedAt && r.dueAt && r.closedAt > r.dueAt ? ' late' : '')+'</span>'
+    : '<span class="badge warn">'+icon('alert-circle',{size:10})+'Open'+(r.overdueDays>0 ? ' · '+r.overdueDays+'d overdue' : '')+'</span>';
+  var body =
+    '<div class="finding-card">'+
+      '<div class="fc-top"><span class="fc-title">'+esc(r.checkpoint)+'</span>'+ocBadge+'</div>'+
+      '<div class="fc-meta">'+esc(r.city)+' · '+esc(r.storeName)+' (ID '+esc(r.storeId)+') · Cluster: '+esc(r.cluster||'—')+'</div>'+
+      '<div class="fc-meta">Created '+esc(r.createdAt)+' · CAPA due '+esc(r.dueAt||'—')+'</div>'+
+      '<div class="fc-remark"><b>Auditor remark:</b> '+esc(r.remark||'—')+'</div>'+
+      photoLinksHtml(r.photos, 'Photo')+
+      (r.status==='Closed'
+        ? '<div class="fc-remark"><b>Closure remark:</b> '+esc(r.closureRemark||'—')+(r.closedBy?' &nbsp; <b>Closed by:</b> '+esc(r.closedBy):'')+(r.closedAt?' on '+esc(r.closedAt):'')+'</div>'+photoLinksHtml(r.closurePhotos, 'Closure photo')
+        : '')+
+    '</div>';
+  openModal('alert-circle', 'CAPA finding — '+r.capaId, body);
+}
+
+function reportListHtml(rows){
+  return rows.slice(0,60).map(function(r){
+    var ocBadge = r.oc==='Closed'
+      ? '<span class="badge good">'+icon('check-circle',{size:10})+'Closed</span>'
+      : '<span class="badge warn">'+icon('alert-circle',{size:10})+'Open'+(r.overdueDays>0?' · '+r.overdueDays+'d':'')+'</span>';
+    return '<div class="finding-card">'+
+      '<div class="fc-top"><span class="fc-title">'+esc(r.checkpoint)+'</span>'+ocBadge+'</div>'+
+      '<div class="fc-meta">'+esc(r.auditDate||'')+' · created '+esc(r.createdAt)+'</div>'+
+      '<div class="fc-remark">'+esc(r.remark||'—')+'</div>'+
+    '</div>';
+  }).join('') + (rows.length>60 ? '<div class="panel-sub">Showing 60 of '+rows.length+' CAPA tasks.</div>' : '');
+}
+
+function openStoreReportModal(storeId){
+  var tasks = D.filter(function(c){ return c.storeId===storeId; }).sort(function(a,b){ return b.createdAt.localeCompare(a.createdAt); });
+  if (!tasks.length){ openModal('note', 'Report', '<div class="empty-state">No CAPA tasks found for this store.</div>'); return; }
+  var s = tasks[0];
+  var openN = tasks.filter(function(t){ return t.oc==='Open'; }).length;
+  var closedN = tasks.length - openN;
+  var body = '<div class="section-sub" style="margin-bottom:10px">'+esc(s.city)+' · '+esc(s.storeName)+' (ID '+esc(s.storeId)+') · Cluster '+esc(s.cluster||'—')+' · '+tasks.length+' CAPA tasks · '+openN+' open · '+closedN+' closed</div>'+
+    '<div class="card-title">'+icon('clipboard-list',{size:15})+'CAPA tasks for this store</div>'+
+    reportListHtml(tasks);
+  openModal('note', esc(s.storeName)+' — report', body);
+}
+
+function openModal(iconName, title, bodyHtml){
+  var root = document.getElementById('modalRoot');
+  root.innerHTML =
+    '<div class="modal-backdrop open"><div class="modal">'+
+      '<div class="modal-head"><h3>'+icon(iconName,{size:18})+esc(title)+'</h3><button class="modal-close">'+icon('x',{size:14})+'</button></div>'+
+      '<div class="modal-body">'+bodyHtml+'</div>'+
+    '</div></div>';
+  root.querySelector('.modal-close').addEventListener('click', closeModal);
+  root.querySelector('.modal-backdrop').addEventListener('click', function(e){ if (e.target === this) closeModal(); });
+}
+function closeModal(){ var root = document.getElementById('modalRoot'); if (root) root.innerHTML=''; }
+document.addEventListener('keydown', function(e){ if (e.key==='Escape') closeModal(); });
+
+// ================================================================
+// generic sortable / searchable / paginated table + CSV
+// ================================================================
+function toCsvText(headers, rows){
+  function q(v){ v = String(v==null?'':v); return /[",\n]/.test(v) ? '"'+v.replace(/"/g,'""')+'"' : v; }
+  return '﻿' + headers.map(q).join(',') + '\n' + rows.map(function(r){ return r.map(q).join(','); }).join('\n');
+}
+function downloadTextFile(name, text){
+  var a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], {type:'text/csv;charset=utf-8'}));
+  a.download = name; a.click();
+  setTimeout(function(){ URL.revokeObjectURL(a.href); }, 2000);
+}
+
+function renderGenericTable(el, opts){
+  var page = 0;
+  var sort = opts.defaultSort || null;
+  var search = '';
+  function draw(){
+    var rows = opts.rows.slice();
+    if (search){
+      var s = search.toLowerCase();
+      rows = rows.filter(function(r){ return opts.columns.some(function(c){ return String(r[c.key]||'').toLowerCase().indexOf(s)>-1; }); });
+    }
+    if (sort){
+      rows.sort(function(a,b){
+        var av=a[sort.key], bv=b[sort.key];
+        if (typeof av === 'string') return sort.dir==='asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+        return sort.dir==='asc' ? av-bv : bv-av;
+      });
+    }
+    var pageSize = opts.pageSize || 10;
+    var totalPages = Math.max(1, Math.ceil(rows.length/pageSize));
+    page = Math.min(page, totalPages-1);
+    var pageRows = rows.slice(page*pageSize, page*pageSize+pageSize);
+    var colCount = opts.columns.length + (opts.onViewReport ? 1 : 0);
+    var head = opts.columns.map(function(c){ return '<th data-key="'+c.key+'"'+(c.wide?' style="min-width:220px"':'')+'>'+esc(c.label)+(sort&&sort.key===c.key?(sort.dir==='asc'?' ▲':' ▼'):'')+'</th>'; }).join('')+(opts.onViewReport?'<th></th>':'');
+    var body = pageRows.length ? pageRows.map(function(r,i){
+      return '<tr'+((opts.onRowClick||opts.onViewReport)?' class="rowlink" data-i="'+i+'"':'')+'>'+opts.columns.map(function(c){ return '<td>'+(c.render ? c.render(r) : esc(r[c.key])) +'</td>'; }).join('')+
+        (opts.onViewReport ? '<td><button type="button" class="view-report-btn" data-report-btn data-i="'+i+'">'+icon('note',{size:11})+'View report</button></td>' : '')+
+      '</tr>';
+    }).join('') : ('<tr><td colspan="'+colCount+'"><div class="empty-state">No matching rows.</div></td></tr>');
+    el.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:9px;flex-wrap:wrap;gap:8px">'+
+        (opts.searchable ? '<div class="search-box">'+icon('search',{size:14})+'<input type="text" placeholder="Search store or city…" value="'+esc(search)+'"/></div>' : '<div></div>')+
+        '<div style="display:flex;align-items:center;gap:10px">'+
+          '<div class="panel-sub">'+fmt(rows.length)+' stores</div>'+
+          '<button type="button" class="ghost-btn small" data-csv-btn>Download CSV</button>'+
+        '</div>'+
+      '</div>'+
+      '<div class="table-wrap"><table class="datatable"><thead><tr>'+head+'</tr></thead><tbody>'+body+'</tbody></table></div>'+
+      '<div class="pager"><span>Page '+(page+1)+' of '+totalPages+'</span><span><button data-act="prev" '+(page===0?'disabled':'')+'>‹ Prev</button> <button data-act="next" '+(page>=totalPages-1?'disabled':'')+'>Next ›</button></span></div>';
+    el.querySelectorAll('thead th').forEach(function(th){
+      th.addEventListener('click', function(){
+        var k = th.getAttribute('data-key');
+        sort = (sort && sort.key===k) ? { key:k, dir: sort.dir==='asc'?'desc':'asc' } : { key:k, dir:'desc' };
+        draw();
+      });
+    });
+    var input = el.querySelector('.search-box input');
+    if (input) input.addEventListener('input', function(){ search = input.value; page = 0; draw(); });
+    var csvBtn = el.querySelector('[data-csv-btn]');
+    if (csvBtn) csvBtn.addEventListener('click', function(){
+      var cols = opts.columns.filter(function(c){ return !c.render || c.csv !== false; });
+      downloadTextFile(opts.csvName || 'table-export.csv', toCsvText(
+        cols.map(function(c){ return c.label; }),
+        rows.map(function(r){ return cols.map(function(c){ return r[c.key]; }); })
+      ));
+    });
+    var pv = el.querySelector('[data-act="prev"]'); if (pv) pv.addEventListener('click', function(){ page--; draw(); });
+    var nx = el.querySelector('[data-act="next"]'); if (nx) nx.addEventListener('click', function(){ page++; draw(); });
+    if (opts.onRowClick){
+      el.querySelectorAll('tbody tr.rowlink').forEach(function(tr){
+        tr.addEventListener('click', function(e){
+          if (e.target.closest('[data-report-btn]')) return;
+          opts.onRowClick(pageRows[+tr.getAttribute('data-i')]);
+        });
+      });
+    }
+    if (opts.onViewReport){
+      el.querySelectorAll('[data-report-btn]').forEach(function(btn){
+        btn.addEventListener('click', function(e){
+          e.stopPropagation();
+          opts.onViewReport(pageRows[+btn.getAttribute('data-i')]);
+        });
+      });
+    }
+  }
+  draw();
+}
+
+// ================================================================
+// filter UI
+// ================================================================
+function multiSelect(opts){
+  var btn = document.getElementById(opts.btnId); if (!btn) return null;
+  var wrap = btn.closest('.msel');
+  var pop = wrap.querySelector('.msel-pop');
+  var searchVal = '';
+  var MAX_SHOW = 80;
+  function current(){ return opts.getSelected ? opts.getSelected() : opts.selected; }
+  function renderPop(){
+    var q = searchVal.toLowerCase();
+    var list = opts.options.filter(function(o){ return !q || o.label.toLowerCase().indexOf(q) > -1; });
+    var shown = list.slice(0, MAX_SHOW);
+    var sel = current();
+    pop.innerHTML =
+      '<input class="msel-search" placeholder="Search…" value="'+esc(searchVal)+'"/>'+
+      '<div class="msel-actions"><button data-act="all">Select all</button><button data-act="none">Clear</button></div>'+
+      shown.map(function(o){
+        var checked = !sel || sel.has(o.id);
+        return '<label class="msel-opt"><input type="checkbox" data-id="'+esc(o.id)+'" '+(checked?'checked':'')+'/> '+esc(o.label)+(o.status?' <span class="mini-badge '+(o.status==='Closed'?'mb-good':'mb-warn')+'">'+o.status+'</span>':'')+'</label>';
+      }).join('')+
+      (list.length > MAX_SHOW ? '<div class="panel-sub" style="padding:6px 4px">Showing '+MAX_SHOW+' of '+fmt(list.length)+' — type to search</div>' : '');
+  }
+  function updateBtn(){
+    var sel = current();
+    var n = sel ? sel.size : opts.options.length;
+    btn.innerHTML = icon('chevron-down',{size:12})+' '+opts.label+(sel ? ' <span class="count">'+n+'</span>' : ' <span class="count">All</span>');
+  }
+  btn.addEventListener('click', function(e){ e.stopPropagation(); var wasOpen = wrap.classList.contains('open'); document.querySelectorAll('.msel.open').forEach(function(w){ w.classList.remove('open'); }); if (!wasOpen){ wrap.classList.add('open'); renderPop(); } });
+  document.addEventListener('click', function(e){ if (!wrap.contains(e.target)) wrap.classList.remove('open'); });
+  pop.addEventListener('input', function(e){
+    if (!e.target.classList.contains('msel-search')) return;
+    searchVal = e.target.value; renderPop();
+  });
+  pop.addEventListener('change', function(e){
+    var cb = e.target.closest('input[type=checkbox]'); if (!cb) return;
+    var next = current();
+    next = next ? new Set(next) : new Set(opts.options.map(function(o){ return o.id; }));
+    if (cb.checked) next.add(cb.getAttribute('data-id')); else next.delete(cb.getAttribute('data-id'));
+    if (next.size === opts.options.length) next = null;
+    opts.onChange(next); updateBtn();
+  });
+  pop.addEventListener('click', function(e){
+    var act = e.target.closest('[data-act]'); if (!act) return;
+    e.preventDefault();
+    var isAll = act.getAttribute('data-act') === 'all';
+    pop.querySelectorAll('input[type=checkbox]').forEach(function(cb){ cb.checked = isAll; });
+    opts.onChange(isAll ? null : new Set());
+    updateBtn();
+  });
+  updateBtn();
+  return { updateBtn: updateBtn };
+}
+
+function renderActiveTags(){
+  var el = document.getElementById('activeTags'); if (!el) return;
+  var tags = [];
+  if (state.clusters) tags.push({ t:'Cluster: '+state.clusters.size+' selected', clear:function(){ state.clusters=null; refreshAll(); } });
+  if (state.cities) tags.push({ t:'City: '+state.cities.size+' selected', clear:function(){ state.cities=null; refreshAll(); } });
+  if (state.pods) tags.push({ t:'Store: '+state.pods.size+' selected', clear:function(){ state.pods=null; refreshAll(); } });
+  if (state.status !== 'all') tags.push({ t:'Status: '+(state.status==='open'?'Open':'Closed'), clear:function(){ state.status='all'; syncStatusSeg(); refreshAll(); } });
+  if (state.dateFrom !== DATE_FROM || state.dateTo !== DATE_TO) tags.push({ t:state.dateFrom+' → '+state.dateTo, clear:function(){ state.dateFrom=DATE_FROM; state.dateTo=DATE_TO; syncDateInputs(); refreshAll(); } });
+  el.innerHTML = tags.map(function(t,i){ return '<span class="tag" data-i="'+i+'">'+esc(t.t)+'<button>'+icon('x',{size:10})+'</button></span>'; }).join('');
+  el.querySelectorAll('.tag button').forEach(function(b,i){ b.addEventListener('click', function(){ tags[i].clear(); }); });
+}
+
+function syncDateInputs(){
+  var f = document.getElementById('dateFrom'), t = document.getElementById('dateTo');
+  if (f) f.value = state.dateFrom; if (t) t.value = state.dateTo;
+}
+
+function syncGeoUI(){
+  document.querySelectorAll('#geoSeg .seg-btn').forEach(function(b){
+    b.classList.toggle('active', b.getAttribute('data-geo')===state.geoMode);
+  });
+  document.getElementById('clusterSel').classList.toggle('hidden', state.geoMode!=='cluster');
+  document.getElementById('citySel').classList.toggle('hidden', state.geoMode!=='city');
+}
+
+function syncStatusSeg(){
+  document.querySelectorAll('#statusSeg .seg-btn').forEach(function(b){
+    b.classList.toggle('active', b.getAttribute('data-status')===state.status);
+  });
+}
+
+var msWidgets = [];
+var datePresetSeg = document.getElementById('datePresetSeg');
+var weekSel = document.getElementById('weekSel');
+var monthSel = document.getElementById('monthSel');
+
+function populateDateDropdowns(){
+  weekSel.innerHTML = '<option value="">Select week…</option>' + filterWeeks().map(function(k){
+    return '<option value="'+k+'">'+weekOptionLabel(k)+'</option>';
+  }).join('');
+  monthSel.innerHTML = '<option value="">Select month…</option>' + filterMonths().map(function(m){
+    return '<option value="'+m+'">'+monthOptionLabel(m)+'</option>';
+  }).join('');
+}
+
+function refreshDateStatusText(){
+  var isFull = state.dateFrom === DATE_FROM && state.dateTo === DATE_TO;
+  var txt = isFull ? 'All dates' : state.dateFrom + ' → ' + state.dateTo;
+  document.getElementById('dateStatusText').textContent = txt;
+}
+
+function initFilterBar(){
+  msWidgets.push(multiSelect({ btnId:'clusterSelBtn', label:'Cluster', options: ALL_CLUSTERS.map(function(z){ return {id:z,label:z}; }), getSelected:function(){ return state.clusters; }, onChange:function(v){ state.clusters=v; refreshAll(); } }));
+  msWidgets.push(multiSelect({ btnId:'citySelBtn', label:'City', options: ALL_CITIES.map(function(c){ return {id:c,label:c}; }), getSelected:function(){ return state.cities; }, onChange:function(v){ state.cities=v; refreshAll(); } }));
+  msWidgets.push(multiSelect({ btnId:'podSelBtn', label:'Store', options: ALL_PODS, getSelected:function(){ return state.pods; }, onChange:function(v){ state.pods=v; refreshAll(); } }));
+  var f = document.getElementById('dateFrom'), t = document.getElementById('dateTo');
+  f.min = DATE_FROM; f.max = DATE_TO; f.value = state.dateFrom;
+  f.addEventListener('change', function(){ state.dateFrom = f.value; refreshAll(); });
+  t.min = DATE_FROM; t.max = DATE_TO; t.value = state.dateTo;
+  t.addEventListener('change', function(){ state.dateTo = t.value; refreshAll(); });
+  document.getElementById('resetFiltersBtn').addEventListener('click', function(){
+    state.clusters=null; state.cities=null; state.pods=null; state.geoMode='pan';
+    state.status='all';
+    state.dateFrom=DATE_FROM; state.dateTo=DATE_TO;
+    syncDateInputs(); syncGeoUI(); syncStatusSeg(); refreshAll();
+  });
+
+  document.getElementById('statusSeg').addEventListener('click', function(e){
+    var btn = e.target.closest('.seg-btn'); if (!btn) return;
+    state.status = btn.getAttribute('data-status');
+    syncStatusSeg(); refreshAll();
+  });
+
+  datePresetSeg.addEventListener('click', function(e){
+    var btn = e.target.closest('.seg-btn'); if (!btn) return;
+    datePresetSeg.querySelectorAll('.seg-btn').forEach(function(b){ b.classList.remove('active'); });
+    btn.classList.add('active');
+    var preset = btn.getAttribute('data-preset');
+    weekSel.style.display = preset==='week' ? '' : 'none';
+    monthSel.style.display = preset==='month' ? '' : 'none';
+    if (preset === 'day'){ weekSel.value=''; monthSel.value=''; state.dateFrom = DATE_TO; state.dateTo = DATE_TO; }
+    else if (preset === 'week'){
+      var wks = filterWeeks(); var lastWk = wks[wks.length-1];
+      weekSel.value = lastWk;
+      var r = isoWeekRange(lastWk);
+      state.dateFrom = r.from; state.dateTo = r.to;
+    }
+    else if (preset === 'month'){
+      var mos = filterMonths(); var ym = mos[mos.length-1];
+      monthSel.value = ym;
+      state.dateFrom = ym+'-01'; state.dateTo = ym+'-'+String(lastDayOfMonth(ym)).padStart(2,'0');
+    }
+    else if (preset === 'custom'){ state.dateFrom = DATE_FROM; state.dateTo = DATE_TO; }
+    syncDateInputs();
+    refreshAll();
+  });
+  weekSel.addEventListener('change', function(){
+    if (!weekSel.value) return;
+    var r = isoWeekRange(weekSel.value);
+    state.dateFrom = r.from; state.dateTo = r.to;
+    syncDateInputs();
+    refreshAll();
+  });
+  monthSel.addEventListener('change', function(){
+    if (!monthSel.value) return;
+    state.dateFrom = monthSel.value+'-01';
+    state.dateTo = monthSel.value+'-'+String(lastDayOfMonth(monthSel.value)).padStart(2,'0');
+    syncDateInputs();
+    refreshAll();
+  });
+
+  document.getElementById('geoSeg').addEventListener('click', function(e){
+    var btn = e.target.closest('.seg-btn'); if (!btn) return;
+    state.geoMode = btn.getAttribute('data-geo');
+    if (state.geoMode === 'pan'){ state.clusters = null; state.cities = null; }
+    syncGeoUI(); refreshAll();
+  });
+}
+
+// ================================================================
+// theme toggle
+// ================================================================
+function initTheme(){
+  var saved = localStorage.getItem('ccm-theme');
+  if (saved) document.documentElement.setAttribute('data-theme', saved);
+  var btn = document.getElementById('themeToggle');
+  function paint(){ var cur = document.documentElement.getAttribute('data-theme') || 'light'; btn.innerHTML = icon(cur==='dark'?'sun':'moon',{size:16}); }
+  btn.addEventListener('click', function(){
+    var cur = document.documentElement.getAttribute('data-theme') || 'light';
+    var next = cur === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('ccm-theme', next);
+    paint();
+  });
+  paint();
+}
+
+// ================================================================
+// master refresh
+// ================================================================
+function refreshAll(){
+  var f = computeFiltered();
+  msWidgets.forEach(function(w){ if (w) w.updateBtn(); });
+  renderActiveTags();
+  refreshDateStatusText();
+  renderKPIs(f);
+  renderStoreTable(f);
+}
+
+function init(){
+  initTheme();
+  initFilterBar();
+  populateDateDropdowns();
+  syncGeoUI();
+  refreshAll();
+  document.getElementById('footMeta').textContent = fmt(D.length)+' CAPA tasks · '+fmt(AUDITS.length)+' audits · '+ALL_CLUSTERS.length+' clusters · '+ALL_CITIES.length+' cities · '+ALL_PODS.length+' stores';
+}
+
+init();
+})();
+</script>
+</body>
+</html>
