@@ -255,12 +255,17 @@ function renderKPIs(f){
 
   // All three audit cards derive from one classified set, so they always
   // sum: No. of audits = CAPA open + CAPA closed, in every status filter.
+  // Only audits WITH FINDINGS (nc+pc>0) that got CAPA tasks are counted —
+  // clean audits have nothing to close, so they must not pad "closed".
   var byAudit = {};
   capa.forEach(function(c){ if (c.auditId) (byAudit[c.auditId] = byAudit[c.auditId] || []).push(c); });
   var auditIsOpen = {};
   Object.keys(byAudit).forEach(function(id){
     auditIsOpen[id] = byAudit[id].some(function(c){ return c.oc==='Open'; });
   });
+  var capaAuditIds = {};
+  capa.forEach(function(c){ if (c.auditId) capaAuditIds[c.auditId] = true; });
+  var auditable = audits.filter(function(a){ return (a.nc + a.pc) > 0 && capaAuditIds[a.id]; });
 
   // store-level status: any open task -> Open, else Closed
   var storeOpen = {};
@@ -274,8 +279,8 @@ function renderKPIs(f){
     if (st === 'all') return true;
     return (st === 'open') === !!storeOpen[sid];
   }
-  var auditsSel = st === 'all' ? audits
-    : audits.filter(function(a){ return (st === 'open') === !!auditIsOpen[a.id]; });
+  var auditsSel = st === 'all' ? auditable
+    : auditable.filter(function(a){ return (st === 'open') === !!auditIsOpen[a.id]; });
   var storesAudited = new Set(auditsSel.map(function(a){ return a.storeId; }));
   var storesWithCapa = new Set();
   capaStoreIds.forEach(function(sid){
