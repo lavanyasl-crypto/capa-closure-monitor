@@ -4,10 +4,13 @@ from datetime import datetime, timezone
 ROOT = os.path.dirname(os.path.abspath(__file__))
 BASE = os.path.join(ROOT, "..")
 
-# Source exports (freshest snapshots). If filenames get auto-suffixed by the
-# browser (e.g. " (1)"), drop the newest file here under these exact names.
-CAPA_SRC = os.path.join(BASE, "Capa tasks", "Pod Audit Tool - CAPA Tasks (2).csv")
-RESP_SRC = os.path.join(BASE, "Audit response", "Pod Audit Tool - Audit Responses (2).csv")
+# Source exports. The newest export is sometimes a *partial* slice — e.g. the
+# 2026-10-30 CAPA Tasks export only carried rows for a store-day's FIRST
+# submission, so the kept (latest) audit's CAPA rows existed only in older
+# snapshots. Merge EVERY CSV in each folder (mtime oldest-first, byte-dedup),
+# same as the main dashboard's loadMerged. Never pick just the newest file.
+CAPA_SRC = os.path.join(BASE, "..", "Audit tracking - CAPA closures", "Capa Tasks")
+RESP_SRC = os.path.join(BASE, "..", "Audit tracking - CAPA closures", "Audit Response")
 AUDITS_SRC = os.path.join(BASE, "..", "Audit tracking - CAPA closures", "Audits")
 CLUSTER_SRC = os.path.join(BASE, "Cluster details", "Daily Review-redline - WTD_39.csv")
 OUT = os.path.join(ROOT, "data.js")
@@ -18,12 +21,12 @@ def read_csv(path):
         return list(csv.DictReader(f))
 
 
-def merge_audits_csv(audits_dir):
-    """Merge every Audits export (recursing into backup folders), byte-dedup rows.
+def merge_csv_dir(folder):
+    """Merge every CSV under folder (recursing into backup dirs), byte-dedup rows.
     Oldest file first (by mtime) so the newest snapshot wins ties downstream."""
     rows, seen = [], set()
     files = []
-    for dirpath, _dirnames, filenames in os.walk(audits_dir):
+    for dirpath, _dirnames, filenames in os.walk(folder):
         for fn in filenames:
             if fn.lower().endswith(".csv"):
                 p = os.path.join(dirpath, fn)
@@ -83,7 +86,7 @@ def cluster_for(store_id, city):
 # Same rule as the main dashboard (github-dashboard/scripts/build-data.js):
 # multiple submissions for the same store+day — resubmissions by the same
 # auditor or a second auditor — count as ONE visit; keep the latest startedAt.
-audits_rows = merge_audits_csv(AUDITS_SRC)
+audits_rows = merge_csv_dir(AUDITS_SRC)
 audit_groups = {}
 for r in audits_rows:
     sid = r.get("storeId", "")
@@ -94,12 +97,16 @@ for r in audits_rows:
 
 kept_audits = {}  # auditId -> audit record
 for key, group in audit_groups.items():
-    best, best_ms = group[0], -1
+    best, best_key = group[0], (-1, -1)
     for r in group:
-        t = parse_dt(r.get("startedAt") or r.get("createdAt"))
-        ms = t.timestamp() if t else 0
-        if ms >= best_ms:
-            best_ms, best = ms, r
+        # Resubmissions reuse the same startedAt (e.g. aud_1791515975841 on
+        # 2026-10-09: 3 submissions, one startedAt) — break ties on createdAt
+        # so the latest actual submission always wins, regardless of file order.
+        t1 = parse_dt(r.get("startedAt") or r.get("createdAt"))
+        t2 = parse_dt(r.get("createdAt"))
+        k = (t1.timestamp() if t1 else 0, t2.timestamp() if t2 else 0)
+        if k >= best_key:
+            best_key, best = k, r
     sid = best.get("storeId", "")
     city = best.get("storeLocation", "") or "Unknown"
     kept_audits[best.get("id", "")] = {
@@ -119,7 +126,7 @@ for key, group in audit_groups.items():
 # The Audits export is sometimes a partial slice. For auditIds present only in
 # responses (and not resubmissions of an existing raw audit), synthesize one
 # audit per store+day, earliest submission.
-resp_rows = read_csv(RESP_SRC)
+resp_rows = merge_csv_dir(RESP_SRC)
 raw_audit_ids = {r.get("id", "") for r in audits_rows}
 resp_agg = {}
 for r in resp_rows:
@@ -174,7 +181,7 @@ for r in resp_rows:
     if r.get("storeId") and r.get("storeName"):
         name_by_store.setdefault(r["storeId"], r["storeName"])
 
-capa_rows = read_csv(CAPA_SRC)
+capa_rows = merge_csv_dir(CAPA_SRC)
 best_by_key = {}  # auditId|questionNo -> row (latest createdAt wins)
 skipped_audit = skipped_dupe = 0
 for r in capa_rows:

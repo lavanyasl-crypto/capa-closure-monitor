@@ -66,14 +66,6 @@
         <div class="ctrl-label">Store</div>
         <div class="msel" id="podSel"><button class="msel-btn" id="podSelBtn"></button><div class="msel-pop"></div></div>
       </div>
-      <div class="ctrl-block">
-        <div class="ctrl-label">Status</div>
-        <div class="seg" id="statusSeg">
-          <button type="button" class="seg-btn active" data-status="all">All</button>
-          <button type="button" class="seg-btn" data-status="open">Open</button>
-          <button type="button" class="seg-btn" data-status="closed">Closed</button>
-        </div>
-      </div>
     </div>
     <div class="active-tags" id="activeTags"></div>
   </section>
@@ -87,6 +79,11 @@
       <div>
         <div class="panel-title">City &amp; store closure status</div>
         <div class="panel-sub">City, store and CAPA closure status — use "View report" for the full store report</div>
+      </div>
+      <div class="seg" id="statusSeg">
+        <button type="button" class="seg-btn active" data-status="all">All</button>
+        <button type="button" class="seg-btn" data-status="open">Open</button>
+        <button type="button" class="seg-btn" data-status="closed">Closed</button>
       </div>
     </div>
     <div id="capaOverdueTable"></div>
@@ -250,8 +247,8 @@ function monthOptionLabel(ym){
 // ================================================================
 function renderKPIs(f){
   var el = document.getElementById('capaKpiGrid'); if (!el) return;
+  // Status filter (Open/Closed) applies ONLY to the table below, not the KPIs.
   var capa = f.capa, audits = f.audits;
-  var st = state.status;
 
   // All three audit cards derive from one classified set, so they always
   // sum: No. of audits = CAPA open + CAPA closed, in every status filter.
@@ -267,25 +264,10 @@ function renderKPIs(f){
   capa.forEach(function(c){ if (c.auditId) capaAuditIds[c.auditId] = true; });
   var auditable = audits.filter(function(a){ return (a.nc + a.pc) > 0 && capaAuditIds[a.id]; });
 
-  // store-level status: any open task -> Open, else Closed
-  var storeOpen = {};
-  capa.forEach(function(c){ if (c.oc==='Open') storeOpen[c.storeId] = true; });
-  var capaStoreIds = new Set(capa.map(function(c){ return c.storeId; }));
-
-  // "Stores audited" = union of audit-rollup stores and CAPA-task stores,
-  // so it can never be smaller than "Stores with CAPA tasks" (a few audits
-  // exist only in the CAPA export — their responses rows are missing).
-  function storeMatchesStatus(sid){
-    if (st === 'all') return true;
-    return (st === 'open') === !!storeOpen[sid];
-  }
-  var auditsSel = st === 'all' ? auditable
-    : auditable.filter(function(a){ return (st === 'open') === !!auditIsOpen[a.id]; });
+  var auditsSel = auditable;
   var storesAudited = new Set(auditsSel.map(function(a){ return a.storeId; }));
-  var storesWithCapa = new Set();
-  capaStoreIds.forEach(function(sid){
-    if (storeMatchesStatus(sid)){ storesWithCapa.add(sid); storesAudited.add(sid); }
-  });
+  var storesWithCapa = new Set(capa.map(function(c){ return c.storeId; }));
+  storesWithCapa.forEach(function(sid){ storesAudited.add(sid); });
 
   var noOfAudits = auditsSel.length;
   var auditsOpen = 0;
@@ -431,6 +413,7 @@ function renderGenericTable(el, opts){
   var page = 0;
   var sort = opts.defaultSort || null;
   var search = '';
+  var searchFocus = null;
   function draw(){
     var rows = opts.rows.slice();
     if (search){
@@ -467,13 +450,17 @@ function renderGenericTable(el, opts){
       '<div class="pager"><span>Page '+(page+1)+' of '+totalPages+'</span><span><button data-act="prev" '+(page===0?'disabled':'')+'>‹ Prev</button> <button data-act="next" '+(page>=totalPages-1?'disabled':'')+'>Next ›</button></span></div>';
     el.querySelectorAll('thead th').forEach(function(th){
       th.addEventListener('click', function(){
+        searchFocus = null;
         var k = th.getAttribute('data-key');
         sort = (sort && sort.key===k) ? { key:k, dir: sort.dir==='asc'?'desc':'asc' } : { key:k, dir:'desc' };
         draw();
       });
     });
     var input = el.querySelector('.search-box input');
-    if (input) input.addEventListener('input', function(){ search = input.value; page = 0; draw(); });
+    if (input){
+      if (searchFocus !== null){ input.focus(); input.setSelectionRange(searchFocus, searchFocus); }
+      input.addEventListener('input', function(){ searchFocus = input.selectionStart; search = input.value; page = 0; draw(); });
+    }
     var csvBtn = el.querySelector('[data-csv-btn]');
     if (csvBtn) csvBtn.addEventListener('click', function(){
       var cols = opts.columns.filter(function(c){ return !c.render || c.csv !== false; });
@@ -512,6 +499,7 @@ function multiSelect(opts){
   var wrap = btn.closest('.msel');
   var pop = wrap.querySelector('.msel-pop');
   var searchVal = '';
+  var searchFocus = 0;
   var MAX_SHOW = 80;
   function current(){ return opts.getSelected ? opts.getSelected() : opts.selected; }
   function renderPop(){
@@ -537,7 +525,10 @@ function multiSelect(opts){
   document.addEventListener('click', function(e){ if (!wrap.contains(e.target)) wrap.classList.remove('open'); });
   pop.addEventListener('input', function(e){
     if (!e.target.classList.contains('msel-search')) return;
+    searchFocus = e.target.selectionStart;
     searchVal = e.target.value; renderPop();
+    var si = pop.querySelector('.msel-search');
+    if (si){ si.focus(); si.setSelectionRange(searchFocus, searchFocus); }
   });
   pop.addEventListener('change', function(e){
     var cb = e.target.closest('input[type=checkbox]'); if (!cb) return;
